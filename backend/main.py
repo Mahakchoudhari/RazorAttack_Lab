@@ -4,7 +4,10 @@ import json
 import math
 import os
 import random
+from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
+from threading import RLock
 from typing import Any, Dict, List
 
 import joblib
@@ -48,7 +51,11 @@ if GROQ_API_KEY:
 
 ROOT = Path(__file__).resolve().parent
 
-DATA_PATH = ROOT.parent / "data" / "razorattacklab_transactions.csv"
+DATA_PATH = (
+    ROOT.parent
+    / "data"
+    / "razorattacklab_transactions.csv"
+)
 
 MODEL_DIR = ROOT / "models"
 
@@ -106,10 +113,135 @@ ISO_COLUMNS = list(
 
 
 # ============================================================
+# LIVE RISK FUSION HISTORY
+# ============================================================
+
+# Only REAL transactions scored through /api/score
+# are added here.
+#
+# We intentionally DO NOT seed this from the CSV because
+# those are historical/synthetic dashboard transactions,
+# not live telemetry.
+
+LIVE_RISK_HISTORY = deque(
+    maxlen=30
+)
+
+LIVE_RISK_LOCK = RLock()
+
+
+def _make_live_event(
+    scored: Dict[str, Any],
+    transaction_id: str | None = None,
+) -> Dict[str, Any]:
+
+    return {
+        "timestamp": datetime.now(
+            timezone.utc
+        ).isoformat(),
+
+        "transaction_id":
+            transaction_id
+            or scored.get(
+                "transaction_id",
+                "LIVE_TXN",
+            ),
+
+        "ml_risk": round(
+            float(
+                scored.get(
+                    "ml_risk",
+                    0,
+                )
+            ),
+            2,
+        ),
+
+        "anomaly_risk": round(
+            float(
+                scored.get(
+                    "anomaly_risk",
+                    0,
+                )
+            ),
+            2,
+        ),
+
+        "graph_risk": round(
+            float(
+                scored.get(
+                    "graph_risk",
+                    0,
+                )
+            ),
+            2,
+        ),
+
+        "final_risk": round(
+            float(
+                scored.get(
+                    "final_risk",
+                    0,
+                )
+            ),
+            2,
+        ),
+
+        "action":
+            scored.get(
+                "action",
+                "ALLOW",
+            ),
+
+        "risk_band":
+            scored.get(
+                "risk_band",
+                "low",
+            ),
+    }
+
+
+def _add_live_risk_event(
+    scored: Dict[str, Any],
+) -> Dict[str, Any]:
+
+    event = _make_live_event(
+        scored
+    )
+
+    with LIVE_RISK_LOCK:
+        LIVE_RISK_HISTORY.append(event)
+
+    return event
+
+
+def _get_live_risk_history(
+    limit: int = 30,
+) -> List[Dict[str, Any]]:
+
+    safe_limit = max(
+        1,
+        min(
+            limit,
+            30,
+        ),
+    )
+
+    with LIVE_RISK_LOCK:
+
+        history = list(
+            LIVE_RISK_HISTORY
+        )
+
+    return history[-safe_limit:]
+
+
+# ============================================================
 # HISTORICAL GRAPH DATA
 # ============================================================
 
 # Only historical connectivity is used for graph risk.
+
 HISTORY = DATA.iloc[
     : int(len(DATA) * 0.80)
 ].copy()
@@ -120,7 +252,10 @@ DEVICE_STATS = HISTORY.groupby(
 ).agg(
     unique_users=("user_id", "nunique"),
     unique_ips=("ip_id", "nunique"),
-    total_transactions=("transaction_id", "count"),
+    total_transactions=(
+        "transaction_id",
+        "count",
+    ),
 )
 
 
@@ -128,8 +263,14 @@ IP_STATS = HISTORY.groupby(
     "ip_id"
 ).agg(
     unique_users=("user_id", "nunique"),
-    unique_devices=("device_id", "nunique"),
-    total_transactions=("transaction_id", "count"),
+    unique_devices=(
+        "device_id",
+        "nunique",
+    ),
+    total_transactions=(
+        "transaction_id",
+        "count",
+    ),
 )
 
 
@@ -287,7 +428,10 @@ def _as_record(
     payload: TransactionInput | Dict[str, Any]
 ) -> Dict[str, Any]:
 
-    if isinstance(payload, TransactionInput):
+    if isinstance(
+        payload,
+        TransactionInput,
+    ):
 
         record = payload.model_dump()
 
@@ -296,7 +440,9 @@ def _as_record(
         record = dict(payload)
 
     stamp = pd.to_datetime(
-        record.get("timestamp_utc"),
+        record.get(
+            "timestamp_utc"
+        ),
         utc=True,
     )
 
@@ -318,22 +464,39 @@ def _as_record(
     )
 
     record["high_amount_deviation"] = int(
-        record["amount_to_average_ratio"] >= 3
+        record[
+            "amount_to_average_ratio"
+        ] >= 3
     )
 
     record["high_velocity"] = int(
-        record["transactions_1h"] >= 5
-        or record["transactions_24h"] >= 20
+        record[
+            "transactions_1h"
+        ] >= 5
+        or
+        record[
+            "transactions_24h"
+        ] >= 20
     )
 
     record["shared_infrastructure"] = int(
-        record["unique_users_on_device"] >= 3
-        or record["unique_accounts_on_ip"] >= 5
+        record[
+            "unique_users_on_device"
+        ] >= 3
+        or
+        record[
+            "unique_accounts_on_ip"
+        ] >= 5
     )
 
     record["new_account_new_device"] = int(
-        record["account_age_days"] <= 7
-        and record["is_new_device"] == 1
+        record[
+            "account_age_days"
+        ] <= 7
+        and
+        record[
+            "is_new_device"
+        ] == 1
     )
 
     return record
@@ -347,7 +510,9 @@ def _model_frame(
     record: Dict[str, Any]
 ) -> pd.DataFrame:
 
-    frame = pd.DataFrame([record])
+    frame = pd.DataFrame(
+        [record]
+    )
 
     missing = [
         column
@@ -361,7 +526,9 @@ def _model_frame(
             f"Missing model fields: {missing}"
         )
 
-    return frame[MODEL_COLUMNS]
+    return frame[
+        MODEL_COLUMNS
+    ]
 
 
 # ============================================================
@@ -399,7 +566,11 @@ def _graph_scores(
             max(
                 0.0,
                 (
-                    float(device["unique_users"])
+                    float(
+                        device[
+                            "unique_users"
+                        ]
+                    )
                     - 1
                 ) / 7,
             ),
@@ -410,7 +581,11 @@ def _graph_scores(
             max(
                 0.0,
                 (
-                    float(device["unique_ips"])
+                    float(
+                        device[
+                            "unique_ips"
+                        ]
+                    )
                     - 1
                 ) / 4,
             ),
@@ -430,7 +605,11 @@ def _graph_scores(
             max(
                 0.0,
                 (
-                    float(ip["unique_users"])
+                    float(
+                        ip[
+                            "unique_users"
+                        ]
+                    )
                     - 1
                 ) / 9,
             ),
@@ -441,7 +620,11 @@ def _graph_scores(
             max(
                 0.0,
                 (
-                    float(ip["unique_devices"])
+                    float(
+                        ip[
+                            "unique_devices"
+                        ]
+                    )
                     - 1
                 ) / 6,
             ),
@@ -452,7 +635,10 @@ def _graph_scores(
             + 45 * shared_devices
         )
 
+    # --------------------------------------------------------
     # Brand-new IDs
+    # --------------------------------------------------------
+
     if device is None:
 
         device_score = min(
@@ -481,9 +667,18 @@ def _graph_scores(
     )
 
     return (
-        round(device_score, 2),
-        round(ip_score, 2),
-        round(graph_score, 2),
+        round(
+            device_score,
+            2,
+        ),
+        round(
+            ip_score,
+            2,
+        ),
+        round(
+            graph_score,
+            2,
+        ),
     )
 
 
@@ -498,28 +693,51 @@ def _policy(
 ) -> str:
 
     if (
-        record["unique_users_on_device"] >= 5
-        and record["unique_accounts_on_ip"] >= 5
-        and record["shared_infrastructure"] == 1
+        record[
+            "unique_users_on_device"
+        ] >= 5
+        and
+        record[
+            "unique_accounts_on_ip"
+        ] >= 5
+        and
+        record[
+            "shared_infrastructure"
+        ] == 1
     ):
 
         return "BLOCK"
 
     if (
         (
-            record["transactions_1h"] >= 15
-            or record["transactions_24h"] >= 30
+            record[
+                "transactions_1h"
+            ] >= 15
+            or
+            record[
+                "transactions_24h"
+            ] >= 30
         )
-        and final_risk >= 55
+        and
+        final_risk >= 55
     ):
 
         return "BLOCK"
 
     if (
-        record["is_new_device"] == 1
-        and record["is_new_location"] == 1
-        and record["failed_attempts_24h"] >= 3
-        and final_risk >= 50
+        record[
+            "is_new_device"
+        ] == 1
+        and
+        record[
+            "is_new_location"
+        ] == 1
+        and
+        record[
+            "failed_attempts_24h"
+        ] >= 3
+        and
+        final_risk >= 50
     ):
 
         return "VERIFY"
@@ -554,25 +772,47 @@ def _hardened_policy(
 ) -> str:
 
     if (
-        record["unique_users_on_device"] >= 5
-        and record["unique_accounts_on_ip"] >= 5
-        and record["shared_infrastructure"] == 1
+        record[
+            "unique_users_on_device"
+        ] >= 5
+        and
+        record[
+            "unique_accounts_on_ip"
+        ] >= 5
+        and
+        record[
+            "shared_infrastructure"
+        ] == 1
     ):
 
         return "BLOCK"
 
     if (
-        record["is_new_device"] == 1
-        and record["is_new_location"] == 1
-        and record["failed_attempts_24h"] >= 3
-        and final_risk >= 50
+        record[
+            "is_new_device"
+        ] == 1
+        and
+        record[
+            "is_new_location"
+        ] == 1
+        and
+        record[
+            "failed_attempts_24h"
+        ] >= 3
+        and
+        final_risk >= 50
     ):
 
         return "BLOCK"
 
     if (
-        record["transactions_1h"] >= 15
-        or record["transactions_24h"] >= 30
+        record[
+            "transactions_1h"
+        ] >= 15
+        or
+        record[
+            "transactions_24h"
+        ] >= 30
     ):
 
         return (
@@ -582,9 +822,15 @@ def _hardened_policy(
         )
 
     if (
-        record["amount_to_average_ratio"] >= 3
-        and record["high_amount_deviation"] == 1
-        and anomaly_flag == 1
+        record[
+            "amount_to_average_ratio"
+        ] >= 3
+        and
+        record[
+            "high_amount_deviation"
+        ] == 1
+        and
+        anomaly_flag == 1
     ):
 
         return "REVIEW"
@@ -608,11 +854,14 @@ def _hardened_policy(
 # GROQ HELPERS
 # ============================================================
 
-def _safe_json_loads(text: str) -> Dict[str, Any]:
+def _safe_json_loads(
+    text: str
+) -> Dict[str, Any]:
 
     text = text.strip()
 
     # Remove markdown fences if model adds them.
+
     if text.startswith("```"):
 
         text = text.replace(
@@ -628,17 +877,31 @@ def _safe_json_loads(text: str) -> Dict[str, Any]:
 
     try:
 
-        return json.loads(text)
+        return json.loads(
+            text
+        )
 
     except Exception:
 
         return {
-            "risk_summary": text,
-            "observed_evidence": [],
-            "why_suspicious": text,
-            "likely_attack_pattern": "Unknown",
-            "recommended_action": "Review",
-            "attack_story": text,
+
+            "risk_summary":
+                text,
+
+            "observed_evidence":
+                [],
+
+            "why_suspicious":
+                text,
+
+            "likely_attack_pattern":
+                "Unknown",
+
+            "recommended_action":
+                "Review",
+
+            "attack_story":
+                text,
         }
 
 
@@ -650,14 +913,30 @@ def _groq_transaction_analysis(
     if groq_client is None:
 
         return {
-            "available": False,
-            "error": "GROQ_API_KEY is not configured.",
-            "risk_summary": "AI analysis unavailable.",
-            "observed_evidence": [],
-            "why_suspicious": "",
-            "likely_attack_pattern": "Unavailable",
-            "recommended_action": scored["action"],
-            "attack_story": "",
+
+            "available":
+                False,
+
+            "error":
+                "GROQ_API_KEY is not configured.",
+
+            "risk_summary":
+                "AI analysis unavailable.",
+
+            "observed_evidence":
+                [],
+
+            "why_suspicious":
+                "",
+
+            "likely_attack_pattern":
+                "Unavailable",
+
+            "recommended_action":
+                scored["action"],
+
+            "attack_story":
+                "",
         }
 
     # --------------------------------------------------------
@@ -668,84 +947,141 @@ def _groq_transaction_analysis(
     evidence = {
 
         "transaction": {
+
             "transaction_id":
-                record["transaction_id"],
+                record[
+                    "transaction_id"
+                ],
 
             "amount_inr":
-                record["amount_inr"],
+                record[
+                    "amount_inr"
+                ],
 
             "location":
-                record["location"],
+                record[
+                    "location"
+                ],
 
             "payment_method":
-                record["payment_method"],
+                record[
+                    "payment_method"
+                ],
 
             "merchant_category":
-                record["merchant_category"],
+                record[
+                    "merchant_category"
+                ],
 
             "account_age_days":
-                record["account_age_days"],
+                record[
+                    "account_age_days"
+                ],
 
             "failed_attempts_24h":
-                record["failed_attempts_24h"],
+                record[
+                    "failed_attempts_24h"
+                ],
 
             "transactions_1h":
-                record["transactions_1h"],
+                record[
+                    "transactions_1h"
+                ],
 
             "transactions_24h":
-                record["transactions_24h"],
+                record[
+                    "transactions_24h"
+                ],
 
             "unique_users_on_device":
-                record["unique_users_on_device"],
+                record[
+                    "unique_users_on_device"
+                ],
 
             "unique_accounts_on_ip":
-                record["unique_accounts_on_ip"],
+                record[
+                    "unique_accounts_on_ip"
+                ],
 
             "is_new_device":
-                bool(record["is_new_device"]),
+                bool(
+                    record[
+                        "is_new_device"
+                    ]
+                ),
 
             "is_new_location":
-                bool(record["is_new_location"]),
+                bool(
+                    record[
+                        "is_new_location"
+                    ]
+                ),
 
             "amount_to_average_ratio":
-                record["amount_to_average_ratio"],
+                record[
+                    "amount_to_average_ratio"
+                ],
         },
 
         "risk_engine": {
 
             "ml_risk":
-                scored["ml_risk"],
+                scored[
+                    "ml_risk"
+                ],
 
             "anomaly_risk":
-                scored["anomaly_risk"],
+                scored[
+                    "anomaly_risk"
+                ],
 
             "graph_risk":
-                scored["graph_risk"],
+                scored[
+                    "graph_risk"
+                ],
 
             "device_graph_risk":
-                scored["device_graph_risk"],
+                scored[
+                    "device_graph_risk"
+                ],
 
             "ip_graph_risk":
-                scored["ip_graph_risk"],
+                scored[
+                    "ip_graph_risk"
+                ],
 
             "final_risk":
-                scored["final_risk"],
+                scored[
+                    "final_risk"
+                ],
 
             "risk_band":
-                scored["risk_band"],
+                scored[
+                    "risk_band"
+                ],
 
             "anomaly_detected":
-                bool(scored["anomaly_flag"]),
+                bool(
+                    scored[
+                        "anomaly_flag"
+                    ]
+                ),
 
             "baseline_action":
-                scored["action"],
+                scored[
+                    "action"
+                ],
         },
 
         "signals":
-            scored["signals"],
+            scored[
+                "signals"
+            ],
 
         "model_evidence":
-            scored["top_reasons"],
+            scored[
+                "top_reasons"
+            ],
     }
 
     system_prompt = """
@@ -792,27 +1128,45 @@ Analyze this RazorAttackLab transaction.
 
 Evidence:
 
-{json.dumps(evidence, indent=2, default=str)}
+{json.dumps(
+    evidence,
+    indent=2,
+    default=str,
+)}
 
 Return only JSON.
 """
 
     try:
 
-        response = groq_client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt,
-                },
-            ],
-            temperature=0.2,
-            max_completion_tokens=900,
+        response = (
+            groq_client
+            .chat
+            .completions
+            .create(
+                model=GROQ_MODEL,
+
+                messages=[
+                    {
+                        "role":
+                            "system",
+
+                        "content":
+                            system_prompt,
+                    },
+                    {
+                        "role":
+                            "user",
+
+                        "content":
+                            user_prompt,
+                    },
+                ],
+
+                temperature=0.2,
+
+                max_completion_tokens=900,
+            )
         )
 
         content = (
@@ -827,24 +1181,42 @@ Return only JSON.
         )
 
         parsed["available"] = True
-        parsed["model"] = GROQ_MODEL
+
+        parsed["model"] = (
+            GROQ_MODEL
+        )
 
         return parsed
 
     except Exception as exc:
 
         return {
-            "available": False,
-            "error": str(exc),
+
+            "available":
+                False,
+
+            "error":
+                str(exc),
+
             "risk_summary":
                 "AI analysis could not be generated.",
-            "observed_evidence": [],
-            "why_suspicious": "",
+
+            "observed_evidence":
+                [],
+
+            "why_suspicious":
+                "",
+
             "likely_attack_pattern":
                 "Unavailable",
+
             "recommended_action":
-                scored["action"],
-            "attack_story": "",
+                scored[
+                    "action"
+                ],
+
+            "attack_story":
+                "",
         }
 
 
@@ -859,7 +1231,10 @@ def _groq_attack_analysis(
     if groq_client is None:
 
         return {
-            "available": False,
+
+            "available":
+                False,
+
             "error":
                 "GROQ_API_KEY is not configured.",
         }
@@ -909,27 +1284,45 @@ Return ONLY valid JSON:
     user_prompt = f"""
 Analyze this RazorAttackLab attack simulation:
 
-{json.dumps(simulation, indent=2, default=str)}
+{json.dumps(
+    simulation,
+    indent=2,
+    default=str,
+)}
 
 Return only JSON.
 """
 
     try:
 
-        response = groq_client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt,
-                },
-            ],
-            temperature=0.2,
-            max_completion_tokens=1000,
+        response = (
+            groq_client
+            .chat
+            .completions
+            .create(
+                model=GROQ_MODEL,
+
+                messages=[
+                    {
+                        "role":
+                            "system",
+
+                        "content":
+                            system_prompt,
+                    },
+                    {
+                        "role":
+                            "user",
+
+                        "content":
+                            user_prompt,
+                    },
+                ],
+
+                temperature=0.2,
+
+                max_completion_tokens=1000,
+            )
         )
 
         content = (
@@ -944,15 +1337,22 @@ Return only JSON.
         )
 
         parsed["available"] = True
-        parsed["model"] = GROQ_MODEL
+
+        parsed["model"] = (
+            GROQ_MODEL
+        )
 
         return parsed
 
     except Exception as exc:
 
         return {
-            "available": False,
-            "error": str(exc),
+
+            "available":
+                False,
+
+            "error":
+                str(exc),
         }
 
 
@@ -964,17 +1364,25 @@ def score_record(
     payload: TransactionInput | Dict[str, Any]
 ) -> Dict[str, Any]:
 
-    record = _as_record(payload)
+    record = _as_record(
+        payload
+    )
 
-    frame = _model_frame(record)
+    frame = _model_frame(
+        record
+    )
 
-    encoded = PREPROCESSOR.transform(
-        frame
+    encoded = (
+        PREPROCESSOR.transform(
+            frame
+        )
     )
 
     ml_risk = float(
         MODEL
-        .predict_proba(encoded)[:, 1][0]
+        .predict_proba(
+            encoded
+        )[:, 1][0]
         * 100
     )
 
@@ -1020,7 +1428,9 @@ def score_record(
         device_risk,
         ip_risk,
         graph_risk,
-    ) = _graph_scores(record)
+    ) = _graph_scores(
+        record
+    )
 
     # --------------------------------------------------------
     # Risk fusion
@@ -1028,9 +1438,11 @@ def score_record(
 
     final_risk = float(
         np.clip(
-            0.50 * ml_risk
-            + 0.20 * anomaly_risk
-            + 0.30 * graph_risk,
+            (
+                0.50 * ml_risk
+                + 0.20 * anomaly_risk
+                + 0.30 * graph_risk
+            ),
             0,
             100,
         )
@@ -1062,7 +1474,9 @@ def score_record(
         MODEL
         .get_booster()
         .predict(
-            xgboost.DMatrix(encoded),
+            xgboost.DMatrix(
+                encoded
+            ),
             pred_contribs=True,
         )[0][:-1]
     )
@@ -1092,18 +1506,26 @@ def score_record(
 
         top_reasons.append(
             {
-                "feature": name,
+                "feature":
+                    name,
 
                 "impact":
-                    "increases risk"
-                    if contributions[index] > 0
-                    else "decreases risk",
+                    (
+                        "increases risk"
+                        if contributions[
+                            index
+                        ] > 0
+                        else
+                        "decreases risk"
+                    ),
 
                 "importance":
                     round(
                         float(
                             abs(
-                                contributions[index]
+                                contributions[
+                                    index
+                                ]
                             )
                         ),
                         3,
@@ -1137,12 +1559,16 @@ def score_record(
     result = {
 
         "transaction_id":
-            record["transaction_id"],
+            record[
+                "transaction_id"
+            ],
 
         "amount_inr":
             round(
                 float(
-                    record["amount_inr"]
+                    record[
+                        "amount_inr"
+                    ]
                 ),
                 2,
             ),
@@ -1193,17 +1619,23 @@ def score_record(
 
             "new_device":
                 bool(
-                    record["is_new_device"]
+                    record[
+                        "is_new_device"
+                    ]
                 ),
 
             "new_location":
                 bool(
-                    record["is_new_location"]
+                    record[
+                        "is_new_location"
+                    ]
                 ),
 
             "high_velocity":
                 bool(
-                    record["high_velocity"]
+                    record[
+                        "high_velocity"
+                    ]
                 ),
 
             "shared_infrastructure":
@@ -1225,7 +1657,9 @@ def score_record(
 def _evaluate_model() -> Dict[str, float]:
 
     test = DATA.iloc[
-        int(len(DATA) * 0.80):
+        int(
+            len(DATA) * 0.80
+        ):
     ].copy()
 
     frame = pd.DataFrame(
@@ -1237,18 +1671,23 @@ def _evaluate_model() -> Dict[str, float]:
         ]
     )[MODEL_COLUMNS]
 
-    encoded = PREPROCESSOR.transform(
-        frame
+    encoded = (
+        PREPROCESSOR.transform(
+            frame
+        )
     )
 
     probabilities = (
         MODEL
-        .predict_proba(encoded)[:, 1]
+        .predict_proba(
+            encoded
+        )[:, 1]
     )
 
     truth = (
-        test["is_fraud"]
-        .astype(int)
+        test[
+            "is_fraud"
+        ].astype(int)
     )
 
     predictions = (
@@ -1348,18 +1787,24 @@ def _sample_transaction_rows(
         scored.update(
             {
                 "user_id":
-                    row["user_id"],
+                    row[
+                        "user_id"
+                    ],
 
                 "location":
-                    row["location"],
+                    row[
+                        "location"
+                    ],
 
                 "payment_method":
-                    row["payment_method"],
+                    row[
+                        "payment_method"
+                    ],
 
-                # Evaluation metadata is retained
-                # for dashboard table display.
                 "fraud_type":
-                    row["fraud_type"],
+                    row[
+                        "fraud_type"
+                    ],
             }
         )
 
@@ -1390,7 +1835,9 @@ def _attack_record(
         errors="ignore",
     ).to_dict()
 
-    record["transaction_id"] = (
+    record[
+        "transaction_id"
+    ] = (
         f"SIM_{scenario.upper()}_"
         f"{rng.randint(1000, 9999)}"
     )
@@ -1530,7 +1977,9 @@ def _attack_record(
 
 def run_attack_simulation() -> Dict[str, Any]:
 
-    rng = random.Random(42)
+    rng = random.Random(
+        42
+    )
 
     scenarios = [
         "card_testing",
@@ -1548,18 +1997,23 @@ def run_attack_simulation() -> Dict[str, Any]:
             n=100,
             random_state=42,
         )
-        .reset_index(drop=True)
+        .reset_index(
+            drop=True
+        )
     )
 
     for index, scenario in enumerate(
         scenarios
     ):
 
-        for offset in range(20):
+        for offset in range(
+            20
+        ):
 
             attack_input = _attack_record(
                 pool.iloc[
-                    index * 20 + offset
+                    index * 20
+                    + offset
                 ],
                 scenario,
                 rng,
@@ -1595,8 +2049,9 @@ def run_attack_simulation() -> Dict[str, Any]:
         )
 
         hardened_contained = sum(
-            item["hardened_action"]
-            != "ALLOW"
+            item[
+                "hardened_action"
+            ] != "ALLOW"
             for item in rows
         )
 
@@ -1612,7 +2067,8 @@ def run_attack_simulation() -> Dict[str, Any]:
                     contained,
 
                 "bypassed":
-                    len(rows) - contained,
+                    len(rows)
+                    - contained,
 
                 "hardened_contained":
                     hardened_contained,
@@ -1629,7 +2085,8 @@ def run_attack_simulation() -> Dict[str, Any]:
                                     item[
                                         "final_risk"
                                     ]
-                                    for item in rows
+                                    for item
+                                    in rows
                                 ]
                             )
                         ),
@@ -1644,7 +2101,9 @@ def run_attack_simulation() -> Dict[str, Any]:
     )
 
     hardened_contained = sum(
-        item["hardened_action"] != "ALLOW"
+        item[
+            "hardened_action"
+        ] != "ALLOW"
         for item in results
     )
 
@@ -1691,10 +2150,10 @@ def run_attack_simulation() -> Dict[str, Any]:
     # Groq analyzes aggregate simulation.
     # --------------------------------------------------------
 
-    simulation["ai_analysis"] = (
-        _groq_attack_analysis(
-            simulation
-        )
+    simulation[
+        "ai_analysis"
+    ] = _groq_attack_analysis(
+        simulation
     )
 
     return simulation
@@ -1706,7 +2165,9 @@ def run_attack_simulation() -> Dict[str, Any]:
 
 app = FastAPI(
     title="RazorAttackLab API",
+
     version="2.0.0",
+
     description=(
         "Proactive AI fraud defense and "
         "adversarial risk analysis API."
@@ -1735,7 +2196,9 @@ app.add_middleware(
 # HEALTH
 # ============================================================
 
-@app.get("/api/health")
+@app.get(
+    "/api/health"
+)
 def health() -> Dict[str, Any]:
 
     return {
@@ -1755,6 +2218,11 @@ def health() -> Dict[str, Any]:
 
         "groq_model":
             GROQ_MODEL,
+
+        "live_risk_events":
+            len(
+                LIVE_RISK_HISTORY
+            ),
     }
 
 
@@ -1762,12 +2230,26 @@ def health() -> Dict[str, Any]:
 # OVERVIEW
 # ============================================================
 
-@app.get("/api/overview")
+@app.get(
+    "/api/overview"
+)
 def overview() -> Dict[str, Any]:
 
     metrics = _evaluate_model()
 
     queue = _sample_transaction_rows()
+
+    live_history = (
+        _get_live_risk_history(
+            30
+        )
+    )
+
+    latest_live = (
+        live_history[-1]
+        if live_history
+        else None
+    )
 
     return {
 
@@ -1777,22 +2259,56 @@ def overview() -> Dict[str, Any]:
         "dataset": {
 
             "transactions":
-                int(len(DATA)),
+                int(
+                    len(DATA)
+                ),
 
             "fraud_rows":
-                int(DATA["is_fraud"].sum()),
+                int(
+                    DATA[
+                        "is_fraud"
+                    ].sum()
+                ),
         },
 
+        # Existing dashboard queue.
+        # This remains historical/sample data.
         "queue":
             queue,
+
+        # NEW: genuine live telemetry.
+        "risk_fusion": {
+
+            "live":
+                True,
+
+            "count":
+                len(
+                    live_history
+                ),
+
+            "history":
+                live_history,
+
+            "latest":
+                latest_live,
+        },
 
         "graph": {
 
             "devices_monitored":
-                int(len(DEVICE_STATS)),
+                int(
+                    len(
+                        DEVICE_STATS
+                    )
+                ),
 
             "ips_monitored":
-                int(len(IP_STATS)),
+                int(
+                    len(
+                        IP_STATS
+                    )
+                ),
 
             "shared_devices":
                 int(
@@ -1815,6 +2331,47 @@ def overview() -> Dict[str, Any]:
             "available":
                 groq_client is not None,
         },
+    }
+
+
+# ============================================================
+# LIVE RISK FUSION
+# ============================================================
+
+@app.get(
+    "/api/risk-fusion"
+)
+def risk_fusion(
+    limit: int = Query(
+        30,
+        ge=1,
+        le=30,
+    )
+) -> Dict[str, Any]:
+
+    history = (
+        _get_live_risk_history(
+            limit
+        )
+    )
+
+    return {
+
+        "live":
+            True,
+
+        "count":
+            len(history),
+
+        "history":
+            history,
+
+        "latest":
+            (
+                history[-1]
+                if history
+                else None
+            ),
     }
 
 
@@ -1851,12 +2408,31 @@ def score_transaction(
 
     try:
 
+        # ----------------------------------------------------
+        # Deterministic risk engine
+        # ----------------------------------------------------
+
         record = _as_record(
             payload
         )
 
         scored = score_record(
             payload
+        )
+
+        # ----------------------------------------------------
+        # IMPORTANT:
+        # Add LIVE telemetry immediately after the
+        # deterministic score is available.
+        #
+        # Groq is deliberately executed AFTER this so that
+        # AI latency does not delay the live Risk Fusion event.
+        # ----------------------------------------------------
+
+        live_event = (
+            _add_live_risk_event(
+                scored
+            )
         )
 
         # ----------------------------------------------------
@@ -1870,8 +2446,23 @@ def score_transaction(
             )
         )
 
-        scored["ai_analysis"] = (
-            ai_analysis
+        scored[
+            "ai_analysis"
+        ] = ai_analysis
+
+        # ----------------------------------------------------
+        # Return live event as part of the score response.
+        # Frontend can immediately render it.
+        # ----------------------------------------------------
+
+        scored[
+            "live_event"
+        ] = live_event
+
+        scored[
+            "live_history_count"
+        ] = len(
+            LIVE_RISK_HISTORY
         )
 
         return scored
