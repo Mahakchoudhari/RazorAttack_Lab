@@ -288,50 +288,39 @@ Synthetic Payment Data (20,000 transactions)
       Policy Hardening
 ```
 
----
-
-## 🗂️ Project Structure
-
-```
-RazorAttackLab/
-│
-├── data/
-│   └── synthetic_transactions.csv   ← Generated dataset
-│
-├── notebooks/
-│   └── razorattacklab.ipynb         ← Full ML notebook
-│
-├── src/
-│   ├── feature_engineering.py       ← Feature pipeline
-│   ├── model.py                     ← XGBoost + Isolation Forest
-│   ├── graph_risk.py                ← Graph layer
-│   ├── risk_fusion.py               ← Final score fusion
-│   ├── policy_engine.py             ← Action decision
-│   ├── attack_simulator.py          ← Attack scenarios
-│   └── explainability.py           ← SHAP explanations
-│
-├── requirements.txt
-└── README.md
-```
-
----
 
 ## 🚀 How to Run
 
+### 1. Clone the Repository
 ```bash
-# Clone the repo
 git clone https://github.com/Mahakchoudhari/RazorAttack_Lab.git
 cd RazorAttack_Lab
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run the notebook
-jupyter notebook notebooks/razorattacklab.ipynb
 ```
 
+### 2. Add Groq API Key
+```bash
+echo "GROQ_API_KEY=your_key_here" > .env
+```
 
+### 3. Run the Notebook
+```bash
+pip install -r requirements.txt
+jupyter notebook RazorAttackLab_FIXED.ipynb
+```
 
+### 4. Run FastAPI Backend
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
+
+### 5. Run React Frontend
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
 
 ---
