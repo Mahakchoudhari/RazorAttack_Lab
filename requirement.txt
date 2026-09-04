@@ -1,0 +1,154 @@
+
+Claude finished the response
+Le! Ye copy karke directly GitHub mein paste kar do — bilkul sahi markdown hai! 😊
+
+Viewed a file, read a file
+Le! File download kar aur GitHub pe directly upload kar do! 😊
+
+GitHub pe kaise add karein:
+
+Repository mein jao
+Add file → Upload files
+Ye .md file upload karo — ya Create new file mein content paste karo
+File name README.md rakho
+Commit changes karo! ✅
+
+Readme nyc professional
+Document·MD 
+https://github.com/Mahakchoudhari/RazorAttack_Lab.git yai dekh
+
+Searched the web
+Tera repo search mein nahi aaya — private hai ya abhi push nahi kiya? 😊
+
+Bata kya hai is project mein — RazorAttack_Lab kya hai? Cybersecurity lab hai kya? Tab README banane mein help karti hoon! 😊
+
+readme banade or deploy in progress kerdena
+
+Bata kya hai is project mein! 😊
+
+RazorAttack_Lab kya hai?
+
+yai dekhle
+
+Mujhe repo ka content nahi dikh raha — private hai ya link share kar! 😊
+
+Kya kar sakti hai:
+
+Option 1 — README paste kar yahan:
+
+Jo bhi project ka description hai — yahan bhej!
+
+Option 2 — Repo public kar:
+
+GitHub pe Settings → Change visibility → Public
+
+Option 3 — Bata do kya hai project mein:
+
+Kya karta hai ye project?
+Konsi language?
+Kya features hain?
+Batao — README bana deti hoon! 😊
+
+RazorAttackLab_Basic_Hinglish_Explanation.md
+RazorAttackLab_Basic_Hinglish_Ex
+planation
+.md
+371 lines
+MD
+Wah Mahak! 🔥 Ye toh bahut advanced project hai! Ab professional README bana deti hoon!
+
+Created a file, read a file
+Le professional README! 🎉🔥
+
+Ye project resume pe bahut strong lagega Mahak! Kyunki:
+
+3-layer AI system banaya ✅
+Attack simulation kiya ✅
+Adversarial testing kiya ✅
+Policy hardening kiya ✅
+Explainable AI use kiya ✅
+Bas ye update karna:
+
+LinkedIn link apna dalna
+Project structure apne actual files ke hisaab se update karna 😊
+
+Readme razorattacklab
+Document·MD 
+RazorAttackLab_FIXED (1).ipynb
+RazorAttackLab_FIX
+ED (1)
+.ipynb
+IPYNB
+iske according readme and requirement.txt de
+
+Ran 4 commands, viewed a file
+Ab sab kuch dekh liya! 😊 README aur requirements.txt dono bana deti hoon!
+
+Created 2 files, read a file
+Le dono files! 🎉🔥
+
+Actual notebook se jo add kiya:
+
+✅ Groq LLM integration badge + details
+✅ NetworkX graph library
+✅ 7 phases bilkul sahi order mein
+✅ Actual features — transactions_24h, amount_to_average_ratio etc.
+✅ OneHotEncoder details
+✅ scale_pos_weight mention
+✅ .env file for Groq API key
+✅ requirements.txt — actual imports se
+Bas ye update karna:
+
+LinkedIn link
+Groq API key instructions 😊
+
+Readme razorattacklab final
+Document·MD 
+
+Requirements
+TXT 
+
+
+Write a message…
+
+
+Claude is AI and can make mistakes.
+Requirements · TXT
+# Core ML
+xgboost>=1.7.0
+scikit-learn>=1.3.0
+numpy>=1.24.0
+pandas>=2.0.0
+ 
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+ 
+# Graph Analysis
+networkx>=3.0
+ 
+# Explainability
+shap>=0.42.0
+ 
+# Model Serialization
+joblib>=1.3.0
+ 
+# LLM Integration
+groq>=0.4.0
+python-dotenv>=1.0.0
+ 
+# Utilities
+pathlib
+ 
+
+
+
+
+
+
+
+
+
+
+
+
